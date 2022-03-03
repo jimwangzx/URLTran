@@ -41,46 +41,42 @@ def preprocess(url_data, tokenizer):
 
 
 def masking_step(inputs):
-    rand = torch.rand(inputs.input_ids.shape)
+    rand = torch.rand(inputs.shape)
     # mask array that replicates BERT approach for MLM
     # ensure that [cls], [sep], [mask] remain untouched
     mask_arr = (
         (rand < 0.15)
-        * (inputs.input_ids != 101)
-        * (inputs.input_ids != 102)
-        * (inputs.input_ids != 0)
+        * (inputs != 101)
+        * (inputs != 102)
+        * (inputs != 0)
     )
 
     selection = [
         torch.flatten(mask_arr[i].nonzero()).tolist()
-        for i in range(inputs.input_ids.shape[0])
+        for i in range(inputs.shape[0])
     ]
 
-    for i in range(inputs.input_ids.shape[0]):
-        inputs.input_ids[i, selection[i]] = 103
+    for i in range(inputs.shape[0]):
+        inputs[i, selection[i]] = 103
 
     return inputs
 
 
 def predict_mask(url, tokenizer, model):
     inputs = preprocess(url, tokenizer)
-    inputs = masking_step(inputs)
-    input_ids = inputs['input_ids'].to(device)
-    attention_mask = inputs['attention_mask'].to(device)
-    labels = inputs['labels'].to(device)
-
+    masked_inputs = masking_step(inputs["input_ids"]).to(device)
     with torch.no_grad():
-        predictions = model(input_ids, attention_mask=attention_mask,labels=labels)
+        predictions = model(masked_inputs)
 
     output_ids = torch.argmax(
         torch.nn.functional.softmax(predictions.logits[0], -1),dim=1).tolist()
 
-    return input_ids, output_ids
+    return masked_inputs, output_ids
 
 
 def train(url_data, tokenizer, model):
     inputs = preprocess(url_data, tokenizer)
-    inputs = masking_step(inputs)
+    # inputs = masking_step(inputs)
 
     # stage data for Pytorch
     dataset = URLDataset(inputs)
@@ -99,11 +95,11 @@ def train(url_data, tokenizer, model):
             optimizer.zero_grad()
 
             # prep data for predict step
-            input_ids = batch["input_ids"].to(device)
+            masked_inputs = masking_step(batch["input_ids"]).to(device)
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["labels"].to(device)
 
-            outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+            outputs = model(masked_inputs, attention_mask=attention_mask, labels=labels)
 
             loss = outputs.loss
             loss.backward()
@@ -115,7 +111,7 @@ def train(url_data, tokenizer, model):
 if __name__ == "__main__":
     train(url_data, tokenizer, model)
     url = "huggingface.co/docs/transformers/task_summary"
-    input_ids, output_ids = predict_mask(url)
+    input_ids, output_ids = predict_mask(url, tokenizer, model)
 
     print("Masked Input: {}".format("".join(
         [tokenizer.ids_to_tokens[tok_id].replace("##", "") for tok_id in input_ids[0].tolist()])))
