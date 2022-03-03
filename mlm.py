@@ -5,19 +5,29 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import BertTokenizer, BertForMaskedLM
 
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+model = BertForMaskedLM.from_pretrained("bert-base-uncased")
+
+# import and preprocess data
+df_final = pd.read_csv("data/final_data.csv")
+url_data = df_final.url.values.tolist()
+
+
 class URLDataset(Dataset):
     def __init__(self, encodings):
         super().__init__()
         self.encodings = encodings
 
     def __getitem__(self, idx):
-        return {k: torch.tensor(v[idx]) for k, v in self.encodings.items()}
+        return {k: v[idx] for k, v in self.encodings.items()}
 
     def __len__(self):
         return len(self.encodings.input_ids)
 
 
-def preprocess(url_data):
+def preprocess(url_data, tokenizer):
     inputs = tokenizer(
         url_data,
         return_tensors="pt",
@@ -33,6 +43,7 @@ def preprocess(url_data):
 def masking_step(inputs):
     rand = torch.rand(inputs.input_ids.shape)
     # mask array that replicates BERT approach for MLM
+    # ensure that [cls], [sep], [mask] remain untouched
     mask_arr = (
         (rand < 0.15)
         * (inputs.input_ids != 101)
@@ -51,65 +62,63 @@ def masking_step(inputs):
     return inputs
 
 
-def predict_mask(url):
-    inputs = preprocess(url)
+def predict_mask(url, tokenizer, model):
+    inputs = preprocess(url, tokenizer)
     inputs = masking_step(inputs)
-    input_ids = inputs["input_ids"].to(device)
-    attention_mask = inputs["attention_mask"].to(device)
-    labels = inputs["labels"].to(device)
+    input_ids = inputs['input_ids'].to(device)
+    attention_mask = inputs['attention_mask'].to(device)
+    labels = inputs['labels'].to(device)
 
-    outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+    with torch.no_grad():
+        predictions = model(input_ids, attention_mask=attention_mask,labels=labels)
 
-    output_ids = [
-        torch.argmax(torch.nn.functional.softmax(outputs.logits[0][i], dim=0)).item()
-        for i in range(outputs.logits[0].shape[0])
-    ]
+    output_ids = torch.argmax(
+        torch.nn.functional.softmax(predictions.logits[0], -1),dim=1).tolist()
+
     return input_ids, output_ids
 
-tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-model = BertForMaskedLM.from_pretrained("bert-base-uncased")
 
-# import and preprocess data
-df_final = pd.read_csv("final_data.csv")
-url_data = df_final.url.values.tolist()
-inputs = preprocess(url_data)
-inputs = masking_step(inputs)
+def train(url_data, tokenizer, model):
+    inputs = preprocess(url_data, tokenizer)
+    inputs = masking_step(inputs)
 
-# stage data for Pytorch
-dataset = URLDataset(inputs)
-loader = DataLoader(dataset, batch_size=32, shuffle=True)
+    # stage data for Pytorch
+    dataset = URLDataset(inputs)
+    loader = DataLoader(dataset, batch_size=32, shuffle=True)
 
-# model training
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # model training
+    model.to(device)
+    model.train()
 
-model.to(device)
-model.train()
+    # initialize optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
 
-# initialize optimizer
-optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
+    epochs = 2
+    for epoch in range(epochs):
+        for batch in loader:
+            optimizer.zero_grad()
 
-epochs = 2
-for epoch in range(epochs):
-    for batch in loader:
-        optimizer.zero_grad()
+            # prep data for predict step
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
 
-        input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
-        labels = batch["labels"].to(device)
+            outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
 
-        outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+            loss = outputs.loss
+            loss.backward()
+            optimizer.step()
 
-        loss = outputs.loss
-        loss.backward()
-        optimizer.step()
+        print("Epoch: {} Loss: {}".format(epoch, loss.item()))
 
-    print("Epoch: {} Loss: {}".format(epoch, loss.item()))
 
-url = "huggingface.co/docs/transformers/task_summary"
-input_ids, output_ids = predict_mask(url)
+if __name__ == "__main__":
+    train(url_data, tokenizer, model)
+    url = "huggingface.co/docs/transformers/task_summary"
+    input_ids, output_ids = predict_mask(url)
 
-print("Masked Input: {}".format("".join(
-    [tokenizer.ids_to_tokens[tok_id].replace("##", "") for tok_id in input_ids[0].tolist()])))
+    print("Masked Input: {}".format("".join(
+        [tokenizer.ids_to_tokens[tok_id].replace("##", "") for tok_id in input_ids[0].tolist()])))
 
-print("Predicted Output: {}".format("".join(
-    [tokenizer.ids_to_tokens[tok_id].replace("##", "") for tok_id in output_ids])))
+    print("Predicted Output: {}".format("".join(
+        [tokenizer.ids_to_tokens[tok_id].replace("##", "") for tok_id in output_ids])))
