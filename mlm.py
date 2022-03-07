@@ -12,12 +12,12 @@ model = BertForMaskedLM.from_pretrained("bert-base-uncased")
 
 # import and preprocess data
 df_final = pd.read_csv("data/final_data.csv")
-url_data = df_final.url.values.tolist()
+url_data = df_final.url.values[:10000].tolist()
 
 
 class URLDataset(Dataset):
     def __init__(self, encodings):
-        super().__init__()
+        super(URLDataset).__init__()
         self.encodings = encodings
 
     def __getitem__(self, idx):
@@ -76,7 +76,6 @@ def predict_mask(url, tokenizer, model):
 
 def train(url_data, tokenizer, model):
     inputs = preprocess(url_data, tokenizer)
-    # inputs = masking_step(inputs)
 
     # stage data for Pytorch
     dataset = URLDataset(inputs)
@@ -105,7 +104,8 @@ def train(url_data, tokenizer, model):
             loss.backward()
             optimizer.step()
 
-        print("Epoch: {} Loss: {}".format(epoch, loss.item()))
+        print(f"Epoch: {epoch} Loss: {loss.item()}")
+        model.save_pretrained(f"URLTran-BERT-{epoch}")
 
 
 if __name__ == "__main__":
@@ -113,8 +113,9 @@ if __name__ == "__main__":
     url = "huggingface.co/docs/transformers/task_summary"
     input_ids, output_ids = predict_mask(url, tokenizer, model)
 
-    print("Masked Input: {}".format("".join(
-        [tokenizer.ids_to_tokens[tok_id].replace("##", "") for tok_id in input_ids[0].tolist()])))
+    masked_input = "".join([tokenizer.ids_to_tokens[tok_id].replace("##", "") for tok_id in input_ids[0].tolist()])
+    prediction = "".join([tokenizer.ids_to_tokens[tok_id].replace("##", "") for tok_id in output_ids])
 
-    print("Predicted Output: {}".format("".join(
-        [tokenizer.ids_to_tokens[tok_id].replace("##", "") for tok_id in output_ids])))
+    print(f"Masked Input: {masked_input}")
+    print(f"Predicted Output: {prediction}")
+

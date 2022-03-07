@@ -21,7 +21,14 @@ Next I used my own Chrome browser history to get an additional 60K. It was prett
 ```
 
 ## Tasks
+Parameters were all gathered from the URLTran paper.
 ### Masked Language Modeling
+Masked Language Modeling (MLM) is a commonly used pre-training task for transformers. The task consists of randomly selecting a subset of tokens to be replaced by a special ‘[MASK]’ token. Then we seek to minimize cross-entropy loss corresponding to the prediction of correct tokens at masked positions. The original BERT paper uses the following methodology for `[MASK]` selection:
+- 15% of the tokens were uniformly selected for masking
+- Of those
+  - 80% are replaced
+  - 10% were left unchanged
+  - 10% were replaced by a random vocabulary token at each iteration
 
 ```python
 # Input:
@@ -32,3 +39,14 @@ Next I used my own Chrome browser history to get an additional 60K. It was prett
     Masked Input: [CLS]huggingface.co[MASK]docs[MASK]transformers/task_summary[SEP]
     Predicted Output: [CLS]huggingface.co/docs/transformers/task_summary[SEP]
 ```
+
+### Fine-Tuning
+
+
+
+## ToDo
+There are a few different variations I need to complete:
+1. Vary the number of layers between {3, 6, 12} for `URLTran_CustVoc`.
+2. Vary the number of tokens per input URL sequence between `{128, 256}`. 
+3. Use both a byte-level and character-level BPE tokenizer w/ 1K- and 10K-sized vocabs.
+4. Extend the `URLDataset` class to handle both MLM and Classification tasks.
